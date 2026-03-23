@@ -151,6 +151,7 @@ defmodule Vaos.KnowledgeTest do
       {:ok, _} = Vaos.Knowledge.open(name)
       :ok = Vaos.Knowledge.assert(name, {"a", "b", "c"})
       assert :ok = Vaos.Knowledge.close(name)
+      Process.sleep(50)
       # Store is gone — store_ref should fail
       assert {:error, :store_not_found} = Vaos.Knowledge.store_ref(name)
     end

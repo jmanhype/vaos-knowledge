@@ -6,7 +6,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   @behaviour Vaos.Knowledge.Backend.Behaviour
 
-  defstruct [:spo, :pos, :osp]
+  defstruct [:spo, :pos, :osp, :journal_path]
 
   @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid()}
 
@@ -18,7 +18,13 @@ defmodule Vaos.Knowledge.Backend.ETS do
     spo = :ets.new(:"#{name}_spo_#{ts}", [:set, :public])
     pos = :ets.new(:"#{name}_pos_#{ts}", [:set, :public])
     osp = :ets.new(:"#{name}_osp_#{ts}", [:set, :public])
-    {:ok, %__MODULE__{spo: spo, pos: pos, osp: osp}}
+
+    journal_dir = Keyword.get(opts, :journal_dir, if(Mix.env() == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])), else: Path.join(System.user_home!(), ".vaos/knowledge")))
+    File.mkdir_p!(journal_dir)
+    journal_path = Path.join(journal_dir, "#{name}.jsonl")
+    state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path}
+    state = replay_journal(state)
+    {:ok, state}
   end
 
   @impl true
@@ -28,6 +34,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
     :ets.insert(state.spo, {{s, p, o}})
     :ets.insert(state.pos, {{p, o, s}})
     :ets.insert(state.osp, {{o, s, p}})
+    journal_write(state, "assert", {s, p, o})
     {:ok, state}
   end
 
@@ -56,6 +63,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
     :ets.delete(state.spo, {s, p, o})
     :ets.delete(state.pos, {p, o, s})
     :ets.delete(state.osp, {o, s, p})
+    journal_write(state, "retract", {s, p, o})
     {:ok, state}
   end
 
@@ -140,6 +148,58 @@ defmodule Vaos.Knowledge.Backend.ETS do
     :ets.tab2list(state.spo)
     |> Enum.map(fn {{s, p, o}} -> {s, p, o} end)
   end
+
+  # --- Journal Persistence ---
+
+  defp journal_write(%{journal_path: nil}, _op, _triple), do: :ok
+  defp journal_write(%{journal_path: path}, op, {s, p, o}) do
+    line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "
+"
+    File.write!(path, line, [:append])
+  rescue
+    _ -> :ok
+  end
+
+  defp replay_journal(%{journal_path: nil} = state), do: state
+  defp replay_journal(%{journal_path: path} = state) do
+    if File.exists?(path) do
+      path
+      |> File.stream!()
+      |> Enum.reduce(state, fn line, acc ->
+        case Jason.decode(String.trim(line)) do
+          {:ok, %{"op" => "assert", "s" => s, "p" => p, "o" => o}} ->
+            :ets.insert(acc.spo, {{s, p, o}})
+            :ets.insert(acc.pos, {{p, o, s}})
+            :ets.insert(acc.osp, {{o, s, p}})
+            acc
+          {:ok, %{"op" => "retract", "s" => s, "p" => p, "o" => o}} ->
+            :ets.delete(acc.spo, {s, p, o})
+            :ets.delete(acc.pos, {p, o, s})
+            :ets.delete(acc.osp, {o, s, p})
+            acc
+          _ -> acc
+        end
+      end)
+    else
+      state
+    end
+  end
+
+  @doc "Compact the journal by rewriting with only current triples."
+  def compact_journal(state) do
+    if state.journal_path do
+      {:ok, triples} = all_triples(state)
+      lines = Enum.map(triples, fn {s, p, o} ->
+        Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "
+"
+      end)
+      File.write!(state.journal_path, lines)
+      {:ok, length(triples)}
+    else
+      {:ok, 0}
+    end
+  end
+
   @doc "Explicitly delete ETS tables when the store is shutting down."
   def cleanup(state) do
     :ets.delete(state.spo)

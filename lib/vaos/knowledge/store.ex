@@ -3,6 +3,14 @@ defmodule Vaos.Knowledge.Store do
 
   use GenServer
 
+  def child_spec(opts) do
+    %{
+      id: {__MODULE__, Keyword.get(opts, :name, :default)},
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :temporary
+    }
+  end
+
   alias Vaos.Knowledge.Backend.ETS
   alias Vaos.Knowledge.Reasoner
   alias Vaos.Knowledge.Sparql
