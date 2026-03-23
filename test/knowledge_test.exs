@@ -29,6 +29,14 @@ defmodule Vaos.KnowledgeTest do
       assert {:error, :invalid_triple} = Vaos.Knowledge.assert(name, {1, "p", "o"})
       assert {:error, :invalid_triple} = Vaos.Knowledge.assert(name, "not a triple")
     end
+
+    test "rejects empty string triple components" do
+      name = :"api_empty_#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      assert {:error, :invalid_triple} = Vaos.Knowledge.assert(name, {"", "p", "o"})
+      assert {:error, :invalid_triple} = Vaos.Knowledge.assert(name, {"s", "", "o"})
+      assert {:error, :invalid_triple} = Vaos.Knowledge.assert(name, {"s", "p", ""})
+    end
   end
 
   describe "assert_many/2" do
@@ -122,6 +130,33 @@ defmodule Vaos.KnowledgeTest do
       :ok = Vaos.Knowledge.assert(name, {"a", "b", "c"})
       {:ok, results} = Vaos.Knowledge.sparql(name, "SELECT ?s WHERE { ?s <b> <c> }")
       assert length(results) == 1
+    end
+  end
+
+  describe "store_ref/1" do
+    test "returns name when store is open" do
+      name = :"api_ref_#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      assert Vaos.Knowledge.store_ref(name) == name
+    end
+
+    test "returns error when store is not open" do
+      assert {:error, :store_not_found} = Vaos.Knowledge.store_ref("nonexistent_store_xyz")
+    end
+  end
+
+  describe "close/1" do
+    test "closes an open store" do
+      name = "close_test_#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      :ok = Vaos.Knowledge.assert(name, {"a", "b", "c"})
+      assert :ok = Vaos.Knowledge.close(name)
+      # Store is gone — store_ref should fail
+      assert {:error, :store_not_found} = Vaos.Knowledge.store_ref(name)
+    end
+
+    test "returns error for unknown store" do
+      assert {:error, :not_found} = Vaos.Knowledge.close("nonexistent_close_xyz")
     end
   end
 

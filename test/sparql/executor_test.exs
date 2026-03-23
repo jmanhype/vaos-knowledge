@@ -42,6 +42,17 @@ defmodule Vaos.Knowledge.Sparql.ExecutorTest do
       assert hd(results)["c"] == "carol"
     end
 
+    test "SELECT * returns all bindings" do
+      name = :"sparql_star_#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      :ok = Vaos.Knowledge.assert(name, {"alice", "knows", "bob"})
+      {:ok, results} = Vaos.Knowledge.sparql(name, "SELECT * WHERE { ?s <knows> ?o }")
+      assert length(results) == 1
+      row = hd(results)
+      assert row["s"] == "alice"
+      assert row["o"] == "bob"
+    end
+
     test "SELECT with no matches returns empty list" do
       name = :"sparql_empty_#{System.unique_integer([:positive])}"
       {:ok, _} = Vaos.Knowledge.open(name)

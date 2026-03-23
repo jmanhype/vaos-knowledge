@@ -13,11 +13,17 @@ defmodule Vaos.Knowledge.Sparql.Executor do
     {:ok, all} = backend.all_triples(state)
     bindings = match_patterns(query.patterns, all)
 
-    # Project selected variables
+    # Project selected variables (empty = SELECT *, return all bindings)
     projected =
-      Enum.map(bindings, fn binding ->
-        Map.take(binding, query.variables)
-      end)
+      case query.variables do
+        [] ->
+          bindings
+
+        vars ->
+          Enum.map(bindings, fn binding ->
+            Map.take(binding, vars)
+          end)
+      end
 
     # ORDER BY
     projected =

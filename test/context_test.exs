@@ -50,6 +50,16 @@ defmodule Vaos.Knowledge.ContextTest do
       assert length(ctx.relationships) == 0
     end
 
+    test "HH:MM values are classified as properties, not relationships", %{store: store} do
+      :ok = Vaos.Knowledge.assert_many(store, [
+        {"agent1", "start_time", "09:30"},
+        {"agent1", "end_time", "17:00"}
+      ])
+      ctx = Context.for_agent(store, agent_id: "agent1")
+      assert length(ctx.properties) == 2
+      assert length(ctx.relationships) == 0
+    end
+
     test "mixed properties and relationships", %{store: store} do
       :ok = Vaos.Knowledge.assert_many(store, [
         {"agent1", "role", "admin"},

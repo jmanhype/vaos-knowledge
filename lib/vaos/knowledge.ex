@@ -26,20 +26,35 @@ defmodule Vaos.Knowledge do
     Store.open(name, opts)
   end
 
+  @doc "Close (stop) a named store. Returns :ok or {:error, :not_found}."
+  @spec close(name()) :: :ok | {:error, :not_found}
+  def close(name) do
+    case Registry.lookup(Vaos.Knowledge.Registry, name) do
+      [{pid, _}] -> DynamicSupervisor.terminate_child(Vaos.Knowledge.StoreSupervisor, pid)
+      [] -> {:error, :not_found}
+    end
+  end
+
   @doc """
   Return the store name for use with all other API functions.
   Useful when you want a named reference rather than using the raw string.
   The store must already be open (see `open/2`).
   """
-  @spec store_ref(name()) :: name()
-  def store_ref(name) when is_binary(name), do: name
+  @spec store_ref(name()) :: name() | {:error, :store_not_found}
+  def store_ref(name) do
+    case Registry.lookup(Vaos.Knowledge.Registry, name) do
+      [{_pid, _}] -> name
+      [] -> {:error, :store_not_found}
+    end
+  end
 
   @doc """
   Assert a triple into the store. Returns :ok or {:error, :invalid_triple}
   if any component is not a non-empty binary string.
   """
   @spec assert(name(), triple()) :: :ok | {:error, :invalid_triple}
-  def assert(name, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
+  def assert(name, {s, p, o})
+      when is_binary(s) and s != "" and is_binary(p) and p != "" and is_binary(o) and o != "" do
     Store.assert(name, {s, p, o})
   end
 

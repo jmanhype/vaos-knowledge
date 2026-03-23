@@ -77,6 +77,7 @@ defmodule Vaos.Knowledge.Context do
       [prefix, local] ->
         prefix != "" and
           local != "" and
+          String.match?(prefix, ~r/^[a-zA-Z]/) and
           not String.contains?(prefix, ["/", " "]) and
           not String.contains?(local, ["/", " ", ":"])
 

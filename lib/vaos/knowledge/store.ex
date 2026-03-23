@@ -42,7 +42,8 @@ defmodule Vaos.Knowledge.Store do
 
   @doc "Assert a triple. Returns :ok or {:error, :invalid_triple}."
   @spec assert(name(), triple()) :: :ok | {:error, :invalid_triple}
-  def assert(name, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
+  def assert(name, {s, p, o})
+      when is_binary(s) and s != "" and is_binary(p) and p != "" and is_binary(o) and o != "" do
     GenServer.call(via(name), {:assert, {s, p, o}})
   end
 
