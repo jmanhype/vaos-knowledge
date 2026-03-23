@@ -3,33 +3,84 @@ defmodule Vaos.Knowledge.TripleTest do
 
   alias Vaos.Knowledge.Triple
 
-  test "new/3 creates a valid triple" do
-    assert {:ok, triple} = Triple.new("alice", "knows", "bob")
-    assert triple.subject == "alice"
-    assert triple.predicate == "knows"
-    assert triple.object == "bob"
+  describe "new/3" do
+    test "creates a valid triple with all fields populated" do
+      assert {:ok, triple} = Triple.new("alice", "knows", "bob")
+      assert triple.subject == "alice"
+      assert triple.predicate == "knows"
+      assert triple.object == "bob"
+    end
+
+    test "rejects non-string arguments" do
+      assert {:error, :invalid_triple} = Triple.new(1, "knows", "bob")
+      assert {:error, :invalid_triple} = Triple.new("alice", :knows, "bob")
+      assert {:error, :invalid_triple} = Triple.new("alice", "knows", nil)
+    end
+
+    test "rejects empty strings" do
+      assert {:error, :invalid_triple} = Triple.new("", "knows", "bob")
+      assert {:error, :invalid_triple} = Triple.new("alice", "", "bob")
+      assert {:error, :invalid_triple} = Triple.new("alice", "knows", "")
+    end
   end
 
-  test "new/3 rejects non-string arguments" do
-    assert {:error, :invalid_triple} = Triple.new(1, "knows", "bob")
-    assert {:error, :invalid_triple} = Triple.new("alice", :knows, "bob")
+  describe "from_tuple/1" do
+    test "creates a triple from a 3-tuple" do
+      assert {:ok, triple} = Triple.from_tuple({"alice", "knows", "bob"})
+      assert triple.subject == "alice"
+      assert triple.predicate == "knows"
+      assert triple.object == "bob"
+    end
+
+    test "rejects non-tuple input" do
+      assert {:error, :invalid_triple} = Triple.from_tuple("not a tuple")
+      assert {:error, :invalid_triple} = Triple.from_tuple({1, 2})
+      assert {:error, :invalid_triple} = Triple.from_tuple(nil)
+    end
+
+    test "rejects tuples with empty strings" do
+      assert {:error, :invalid_triple} = Triple.from_tuple({"", "knows", "bob"})
+    end
   end
 
-  test "from_tuple/1 creates a triple from tuple" do
-    assert {:ok, triple} = Triple.from_tuple({"alice", "knows", "bob"})
-    assert triple.subject == "alice"
+  describe "to_tuple/1" do
+    test "converts a Triple struct to a raw 3-tuple" do
+      {:ok, triple} = Triple.new("alice", "knows", "bob")
+      assert Triple.to_tuple(triple) == {"alice", "knows", "bob"}
+    end
+
+    test "round-trips through from_tuple and to_tuple" do
+      original = {"subject", "predicate", "object"}
+      {:ok, triple} = Triple.from_tuple(original)
+      assert Triple.to_tuple(triple) == original
+    end
   end
 
-  test "to_tuple/1 converts triple to tuple" do
-    {:ok, triple} = Triple.new("alice", "knows", "bob")
-    assert Triple.to_tuple(triple) == {"alice", "knows", "bob"}
-  end
+  describe "valid?/1" do
+    test "returns true for a properly constructed triple" do
+      {:ok, triple} = Triple.new("alice", "knows", "bob")
+      assert Triple.valid?(triple)
+    end
 
-  test "valid?/1 checks non-empty strings" do
-    {:ok, triple} = Triple.new("alice", "knows", "bob")
-    assert Triple.valid?(triple)
+    test "returns false for non-triple structs" do
+      refute Triple.valid?(%{subject: "a", predicate: "b", object: "c"})
+      refute Triple.valid?(nil)
+      refute Triple.valid?("string")
+    end
 
-    {:ok, empty} = Triple.new("", "knows", "bob")
-    refute Triple.valid?(empty)
+    test "returns false for a Triple with empty subject (constructed via struct directly)" do
+      bad = %Triple{subject: "", predicate: "p", object: "o"}
+      refute Triple.valid?(bad)
+    end
+
+    test "returns false for a Triple with empty predicate" do
+      bad = %Triple{subject: "s", predicate: "", object: "o"}
+      refute Triple.valid?(bad)
+    end
+
+    test "returns false for a Triple with empty object" do
+      bad = %Triple{subject: "s", predicate: "p", object: ""}
+      refute Triple.valid?(bad)
+    end
   end
 end

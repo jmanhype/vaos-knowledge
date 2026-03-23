@@ -8,12 +8,20 @@ defmodule Vaos.Knowledge.Reasoner do
 
   @doc """
   Materialize inferred triples. Returns {:ok, new_state, rounds}.
+  Accepts opts: [max_rounds: integer] to cap iterations (default 100).
   """
-  def materialize(backend, state) do
-    do_materialize(backend, state, 0)
+  @max_rounds 100
+
+  def materialize(backend, state, opts \\ []) do
+    max = Keyword.get(opts, :max_rounds, @max_rounds)
+    do_materialize(backend, state, 0, max)
   end
 
-  defp do_materialize(backend, state, round) do
+  defp do_materialize(_backend, state, round, max) when round >= max do
+    {:ok, state, round}
+  end
+
+  defp do_materialize(backend, state, round, max) do
     {:ok, triples} = backend.all_triples(state)
     triple_set = MapSet.new(triples)
     inferred = infer_all(triples, triple_set)
@@ -24,7 +32,7 @@ defmodule Vaos.Knowledge.Reasoner do
       {:ok, state, round}
     else
       {:ok, new_state} = backend.assert_many(state, new_triples)
-      do_materialize(backend, new_state, round + 1)
+      do_materialize(backend, new_state, round + 1, max)
     end
   end
 

@@ -4,6 +4,7 @@ defmodule Vaos.Knowledge.Store do
   use GenServer
 
   alias Vaos.Knowledge.Backend.ETS
+  alias Vaos.Knowledge.Reasoner
   alias Vaos.Knowledge.Sparql
 
   # --- Client API ---
@@ -32,16 +33,23 @@ defmodule Vaos.Knowledge.Store do
     end
   end
 
-  def assert(name, {s, p, o}), do: GenServer.call(via(name), {:assert, {s, p, o}})
+  def assert(name, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
+    GenServer.call(via(name), {:assert, {s, p, o}})
+  end
+
+  def assert(_name, _triple), do: {:error, :invalid_triple}
+
   def assert_many(name, triples), do: GenServer.call(via(name), {:assert_many, triples})
   def retract(name, {s, p, o}), do: GenServer.call(via(name), {:retract, {s, p, o}})
   def query(name, pattern), do: GenServer.call(via(name), {:query, pattern})
   def count(name), do: GenServer.call(via(name), :count)
   def all_triples(name), do: GenServer.call(via(name), :all_triples)
-
   def sparql(name, query_string), do: GenServer.call(via(name), {:sparql, query_string})
 
-  def get_backend(name), do: GenServer.call(via(name), :get_backend)
+  @doc "Run OWL 2 RL forward-chaining materialization through the store GenServer."
+  def materialize(name, opts \\ []) do
+    GenServer.call(via(name), {:materialize, opts})
+  end
 
   defp via(name), do: {:via, Registry, {Vaos.Knowledge.Registry, name}}
 
@@ -55,8 +63,10 @@ defmodule Vaos.Knowledge.Store do
 
   @impl true
   def handle_call({:assert, triple}, _from, data) do
-    {:ok, new_state} = data.backend.assert(data.state, triple)
-    {:reply, :ok, %{data | state: new_state}}
+    case data.backend.assert(data.state, triple) do
+      {:ok, new_state} -> {:reply, :ok, %{data | state: new_state}}
+      {:error, reason} -> {:reply, {:error, reason}, data}
+    end
   end
 
   @impl true
@@ -102,7 +112,13 @@ defmodule Vaos.Knowledge.Store do
   end
 
   @impl true
-  def handle_call(:get_backend, _from, data) do
-    {:reply, {data.backend, data.state}, data}
+  def handle_call({:materialize, opts}, _from, data) do
+    case Reasoner.materialize(data.backend, data.state, opts) do
+      {:ok, new_state, rounds} ->
+        {:reply, {:ok, rounds}, %{data | state: new_state}}
+
+      error ->
+        {:reply, error, data}
+    end
   end
 end

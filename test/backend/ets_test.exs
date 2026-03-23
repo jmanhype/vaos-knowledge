@@ -103,4 +103,8 @@ defmodule Vaos.Knowledge.Backend.ETSTest do
     {:ok, results} = ETS.query(state, subject: "alice", object: "bob")
     assert results == [{"alice", "knows", "bob"}]
   end
+
+  test "assert rejects non-binary arguments", %{state: state} do
+    assert {:error, :invalid_triple} = ETS.assert(state, {1, "knows", "bob"})
+  end
 end

@@ -26,15 +26,18 @@ defmodule Vaos.Knowledge.Backend.ETS do
     {:ok, state}
   end
 
+  def assert(_state, {_s, _p, _o}), do: {:error, :invalid_triple}
+
   @impl true
   def assert_many(state, triples) when is_list(triples) do
-    Enum.each(triples, fn {s, p, o} ->
+    Enum.each(triples, fn {s, p, o} when is_binary(s) and is_binary(p) and is_binary(o) ->
       :ets.insert(state.spo, {{s, p, o}})
       :ets.insert(state.pos, {{p, o, s}})
       :ets.insert(state.osp, {{o, s, p}})
     end)
     {:ok, state}
   end
+
 
   @impl true
   def retract(state, {s, p, o}) do

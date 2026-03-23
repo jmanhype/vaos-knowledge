@@ -9,6 +9,7 @@ defmodule Vaos.Knowledge.Sparql.Parser do
     query = String.trim(query)
 
     cond do
+      query == "" -> {:error, :empty_query}
       query =~ ~r/^SELECT\b/i -> parse_select(query)
       query =~ ~r/^INSERT\s+DATA\b/i -> parse_insert(query)
       query =~ ~r/^DELETE\s+DATA\b/i -> parse_delete(query)
@@ -66,16 +67,17 @@ defmodule Vaos.Knowledge.Sparql.Parser do
   end
 
   defp parse_order_by(str) do
-    case Regex.run(~r/ORDER\s+BY\s+(DESC|ASC)?\s*\(?\s*\?(\w+)\s*\)?/i, str) do
+    case Regex.run(~r/ORDER\s+BY\s+(DESC|ASC)\s*\(?\s*\?(\w+)\s*\)?/i, str) do
       [_, dir, var] ->
         direction = if String.upcase(dir) == "DESC", do: :desc, else: :asc
         {direction, var}
 
-      [_, var] ->
-        {:asc, var}
-
       nil ->
-        nil
+        # Try without direction keyword (defaults to ASC)
+        case Regex.run(~r/ORDER\s+BY\s+\(?\s*\?(\w+)\s*\)?/i, str) do
+          [_, var] -> {:asc, var}
+          nil -> nil
+        end
     end
   end
 
