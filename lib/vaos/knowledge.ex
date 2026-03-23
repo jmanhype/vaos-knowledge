@@ -83,9 +83,11 @@ defmodule Vaos.Knowledge do
   Returns {:ok, results} or {:error, reason}.
   """
   @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
-  def sparql(name, query_string) do
+  def sparql(name, query_string) when is_binary(query_string) do
     Store.sparql(name, query_string)
   end
+
+  def sparql(_name, _query), do: {:error, :invalid_query}
 
   @doc """
   Run OWL 2 RL forward-chaining materialization on the store.

@@ -124,7 +124,7 @@ defmodule Vaos.Knowledge.Sparql.Parser do
   def parse_patterns(body) do
     body
     |> String.trim()
-    |> String.split(".")
+    |> split_on_dot_boundary()
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&parse_single_pattern/1)
@@ -143,7 +143,7 @@ defmodule Vaos.Knowledge.Sparql.Parser do
   defp parse_triple_data(body) do
     body
     |> String.trim()
-    |> String.split(".")
+    |> split_on_dot_boundary()
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&parse_data_triple/1)
@@ -157,6 +157,12 @@ defmodule Vaos.Knowledge.Sparql.Parser do
       [s, p, o] -> {unwrap_term(s), unwrap_term(p), unwrap_term(o)}
       _ -> nil
     end
+  end
+
+  # Split triple patterns on ". " (dot-space) or trailing dot,
+  # but NOT dots inside angle-bracket URIs like <http://example.com/foo>.
+  defp split_on_dot_boundary(str) do
+    Regex.split(~r/\.(?=\s|$)/, str)
   end
 
   defp tokenize(str) do

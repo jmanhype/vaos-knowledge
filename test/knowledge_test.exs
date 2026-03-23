@@ -105,4 +105,43 @@ defmodule Vaos.KnowledgeTest do
       assert {:error, :empty_query} = Vaos.Knowledge.sparql(name, "")
     end
   end
+
+  describe "sparql/2 input validation" do
+    test "rejects non-binary query at top-level API" do
+      name = :"api_sparql_guard_\#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      assert {:error, :invalid_query} = Vaos.Knowledge.sparql(name, 123)
+      assert {:error, :invalid_query} = Vaos.Knowledge.sparql(name, nil)
+      assert {:error, :invalid_query} = Vaos.Knowledge.sparql(name, :atom)
+      assert {:error, :invalid_query} = Vaos.Knowledge.sparql(name, ["list"])
+    end
+
+    test "binary query still works normally" do
+      name = :"api_sparql_ok_\#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      :ok = Vaos.Knowledge.assert(name, {"a", "b", "c"})
+      {:ok, results} = Vaos.Knowledge.sparql(name, "SELECT ?s WHERE { ?s <b> <c> }")
+      assert length(results) == 1
+    end
+  end
+
+  describe "SPARQL with URI predicates (dot-in-URI regression)" do
+    test "SELECT with http:// predicate" do
+      name = :"api_uri_\#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      :ok = Vaos.Knowledge.assert(name, {"alice", "http://schema.org/knows", "bob"})
+      {:ok, results} = Vaos.Knowledge.sparql(name, "SELECT ?s ?o WHERE { ?s <http://schema.org/knows> ?o }")
+      assert length(results) == 1
+      assert hd(results)["s"] == "alice"
+    end
+
+    test "INSERT DATA with dotted URIs round-trips" do
+      name = :"api_uri_ins_\#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+      {:ok, :inserted, 1} = Vaos.Knowledge.sparql(name, "INSERT DATA { <http://ex.co/a> <http://ex.co/b> <http://ex.co/c> }")
+      {:ok, count} = Vaos.Knowledge.count(name)
+      assert count == 1
+    end
+  end
+
 end

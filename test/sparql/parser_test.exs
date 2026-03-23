@@ -86,4 +86,38 @@ defmodule Vaos.Knowledge.Sparql.ParserTest do
       assert {:error, :unsupported_query_type} = Parser.parse("ASK { ?s ?p ?o }")
     end
   end
+
+  describe "URI-safe dot splitting" do
+    test "does not split dots inside angle-bracket URIs" do
+      q = ~s|SELECT ?s ?o WHERE { ?s <http://example.com/knows> ?o }|
+      {:ok, parsed} = Parser.parse(q)
+      assert parsed.type == :select
+      assert length(parsed.patterns) == 1
+      [{s, p, o}] = parsed.patterns
+      assert s == {:var, "s"}
+      assert p == {:literal, "http://example.com/knows"}
+      assert o == {:var, "o"}
+    end
+
+    test "handles multiple patterns with URIs containing dots" do
+      q = ~s|SELECT ?s ?o ?a WHERE { ?s <http://schema.org/name> ?o . ?s <http://schema.org/age> ?a }|
+      {:ok, parsed} = Parser.parse(q)
+      assert length(parsed.patterns) == 2
+    end
+
+    test "INSERT DATA with URIs containing dots" do
+      q = ~s|INSERT DATA { <http://example.com/alice> <http://schema.org/knows> <http://example.com/bob> }|
+      {:ok, parsed} = Parser.parse(q)
+      assert parsed.type == :insert_data
+      assert parsed.triples == [{"http://example.com/alice", "http://schema.org/knows", "http://example.com/bob"}]
+    end
+
+    test "DELETE DATA with URIs containing dots" do
+      q = ~s|DELETE DATA { <http://ex.co/a> <http://ex.co/b> <http://ex.co/c> }|
+      {:ok, parsed} = Parser.parse(q)
+      assert parsed.type == :delete_data
+      assert parsed.triples == [{"http://ex.co/a", "http://ex.co/b", "http://ex.co/c"}]
+    end
+  end
+
 end

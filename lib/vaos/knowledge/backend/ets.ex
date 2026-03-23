@@ -140,4 +140,11 @@ defmodule Vaos.Knowledge.Backend.ETS do
     :ets.tab2list(state.spo)
     |> Enum.map(fn {{s, p, o}} -> {s, p, o} end)
   end
+  @doc "Explicitly delete ETS tables when the store is shutting down."
+  def cleanup(state) do
+    :ets.delete(state.spo)
+    :ets.delete(state.pos)
+    :ets.delete(state.osp)
+    :ok
+  end
 end

@@ -70,7 +70,11 @@ defmodule Vaos.Knowledge.Store do
 
   @doc "Execute a SPARQL query string."
   @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
-  def sparql(name, query_string), do: GenServer.call(via(name), {:sparql, query_string})
+  def sparql(name, query_string) when is_binary(query_string) do
+    GenServer.call(via(name), {:sparql, query_string})
+  end
+
+  def sparql(_name, _query), do: {:error, :invalid_query}
 
   @doc "Run OWL 2 RL forward-chaining materialization through the store GenServer."
   @spec materialize(name(), keyword()) :: {:ok, non_neg_integer()}
@@ -152,5 +156,14 @@ defmodule Vaos.Knowledge.Store do
   @impl true
   def handle_call(msg, _from, data) do
     {:reply, {:error, {:unknown_call, msg}}, data}
+  end
+
+  @impl true
+  def terminate(_reason, data) do
+    if function_exported?(data.backend, :cleanup, 1) do
+      data.backend.cleanup(data.state)
+    end
+
+    :ok
   end
 end
