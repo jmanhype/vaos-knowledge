@@ -8,7 +8,10 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   defstruct [:spo, :pos, :osp]
 
+  @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid()}
+
   @impl true
+  @spec init(keyword()) :: {:ok, state()}
   def init(opts) do
     name = Keyword.get(opts, :name, :default)
     ts = System.unique_integer([:positive])
@@ -19,6 +22,8 @@ defmodule Vaos.Knowledge.Backend.ETS do
   end
 
   @impl true
+  @spec assert(state(), Vaos.Knowledge.Backend.Behaviour.triple()) ::
+          {:ok, state()} | {:error, :invalid_triple}
   def assert(state, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
     :ets.insert(state.spo, {{s, p, o}})
     :ets.insert(state.pos, {{p, o, s}})
@@ -29,17 +34,24 @@ defmodule Vaos.Knowledge.Backend.ETS do
   def assert(_state, {_s, _p, _o}), do: {:error, :invalid_triple}
 
   @impl true
+  @spec assert_many(state(), [Vaos.Knowledge.Backend.Behaviour.triple()]) :: {:ok, state()}
   def assert_many(state, triples) when is_list(triples) do
-    Enum.each(triples, fn {s, p, o} when is_binary(s) and is_binary(p) and is_binary(o) ->
-      :ets.insert(state.spo, {{s, p, o}})
-      :ets.insert(state.pos, {{p, o, s}})
-      :ets.insert(state.osp, {{o, s, p}})
+    Enum.each(triples, fn triple ->
+      case triple do
+        {s, p, o} when is_binary(s) and is_binary(p) and is_binary(o) ->
+          :ets.insert(state.spo, {{s, p, o}})
+          :ets.insert(state.pos, {{p, o, s}})
+          :ets.insert(state.osp, {{o, s, p}})
+
+        _invalid ->
+          :skip
+      end
     end)
     {:ok, state}
   end
 
-
   @impl true
+  @spec retract(state(), Vaos.Knowledge.Backend.Behaviour.triple()) :: {:ok, state()}
   def retract(state, {s, p, o}) do
     :ets.delete(state.spo, {s, p, o})
     :ets.delete(state.pos, {p, o, s})
@@ -48,6 +60,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
   end
 
   @impl true
+  @spec query(state(), keyword()) :: {:ok, [Vaos.Knowledge.Backend.Behaviour.triple()]}
   def query(state, pattern) do
     s = Keyword.get(pattern, :subject)
     p = Keyword.get(pattern, :predicate)
@@ -58,11 +71,13 @@ defmodule Vaos.Knowledge.Backend.ETS do
   end
 
   @impl true
+  @spec count(state()) :: {:ok, non_neg_integer()}
   def count(state) do
     {:ok, :ets.info(state.spo, :size)}
   end
 
   @impl true
+  @spec all_triples(state()) :: {:ok, [Vaos.Knowledge.Backend.Behaviour.triple()]}
   def all_triples(state) do
     triples =
       :ets.tab2list(state.spo)

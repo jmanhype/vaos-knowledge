@@ -7,14 +7,21 @@ defmodule Vaos.Knowledge.Store do
   alias Vaos.Knowledge.Reasoner
   alias Vaos.Knowledge.Sparql
 
+  @type name :: String.t()
+  @type triple :: {String.t(), String.t(), String.t()}
+
   # --- Client API ---
 
+  @doc "Start a named store GenServer. Called by DynamicSupervisor via `open/2`."
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
     backend = Keyword.get(opts, :backend, ETS)
     GenServer.start_link(__MODULE__, {backend, opts}, name: via(name))
   end
 
+  @doc "Open or connect to a named store. Idempotent — returns {:ok, pid} if already running."
+  @spec open(name(), keyword()) :: {:ok, pid()} | {:error, term()}
   def open(name, opts \\ []) do
     case GenServer.whereis(via(name)) do
       nil ->
@@ -33,20 +40,40 @@ defmodule Vaos.Knowledge.Store do
     end
   end
 
+  @doc "Assert a triple. Returns :ok or {:error, :invalid_triple}."
+  @spec assert(name(), triple()) :: :ok | {:error, :invalid_triple}
   def assert(name, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
     GenServer.call(via(name), {:assert, {s, p, o}})
   end
 
   def assert(_name, _triple), do: {:error, :invalid_triple}
 
+  @doc "Assert multiple triples. Silently skips invalid triples."
+  @spec assert_many(name(), [triple()]) :: :ok
   def assert_many(name, triples), do: GenServer.call(via(name), {:assert_many, triples})
+
+  @doc "Retract a triple. No-op if not present."
+  @spec retract(name(), triple()) :: :ok
   def retract(name, {s, p, o}), do: GenServer.call(via(name), {:retract, {s, p, o}})
+
+  @doc "Query triples by pattern keyword list (subject:, predicate:, object:)."
+  @spec query(name(), keyword()) :: {:ok, [triple()]}
   def query(name, pattern), do: GenServer.call(via(name), {:query, pattern})
+
+  @doc "Count triples in the store."
+  @spec count(name()) :: {:ok, non_neg_integer()}
   def count(name), do: GenServer.call(via(name), :count)
+
+  @doc "Return all triples."
+  @spec all_triples(name()) :: {:ok, [triple()]}
   def all_triples(name), do: GenServer.call(via(name), :all_triples)
+
+  @doc "Execute a SPARQL query string."
+  @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
   def sparql(name, query_string), do: GenServer.call(via(name), {:sparql, query_string})
 
   @doc "Run OWL 2 RL forward-chaining materialization through the store GenServer."
+  @spec materialize(name(), keyword()) :: {:ok, non_neg_integer()}
   def materialize(name, opts \\ []) do
     GenServer.call(via(name), {:materialize, opts})
   end
@@ -120,5 +147,10 @@ defmodule Vaos.Knowledge.Store do
       error ->
         {:reply, error, data}
     end
+  end
+
+  @impl true
+  def handle_call(msg, _from, data) do
+    {:reply, {:error, {:unknown_call, msg}}, data}
   end
 end

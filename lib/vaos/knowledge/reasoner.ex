@@ -6,12 +6,14 @@ defmodule Vaos.Knowledge.Reasoner do
   Runs fixpoint iteration until no new triples are inferred.
   """
 
-  @doc """
-  Materialize inferred triples. Returns {:ok, new_state, rounds}.
-  Accepts opts: [max_rounds: integer] to cap iterations (default 100).
-  """
   @max_rounds 100
 
+  @doc """
+  Materialize inferred triples into the store.
+  Returns {:ok, new_state, rounds} where rounds is the number of fixpoint iterations.
+  Accepts opts: [max_rounds: integer] to cap iterations (default #{@max_rounds}).
+  """
+  @spec materialize(module(), term(), keyword()) :: {:ok, term(), non_neg_integer()}
   def materialize(backend, state, opts \\ []) do
     max = Keyword.get(opts, :max_rounds, @max_rounds)
     do_materialize(backend, state, 0, max)

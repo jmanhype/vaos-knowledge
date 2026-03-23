@@ -4,7 +4,10 @@ defmodule Vaos.Knowledge.Sparql.Parser do
   Supports basic graph patterns, ?variables, ORDER BY, LIMIT.
   """
 
+  @type parsed_query :: map()
+
   @doc "Parse a SPARQL query string into a structured representation."
+  @spec parse(String.t()) :: {:ok, parsed_query()} | {:error, atom()}
   def parse(query) when is_binary(query) do
     query = String.trim(query)
 
@@ -117,6 +120,7 @@ defmodule Vaos.Knowledge.Sparql.Parser do
   # --- Pattern Parsing ---
 
   @doc false
+  @spec parse_patterns(String.t()) :: [tuple()]
   def parse_patterns(body) do
     body
     |> String.trim()

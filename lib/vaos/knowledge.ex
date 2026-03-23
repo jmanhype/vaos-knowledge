@@ -5,51 +5,84 @@ defmodule Vaos.Knowledge do
 
   Triples are raw {subject, predicate, object} 3-tuples of strings. For
   struct-based access and validation at boundaries use Vaos.Knowledge.Triple.
+
+  ## Usage
+
+      {:ok, _pid} = Vaos.Knowledge.open("my_store")
+      store = Vaos.Knowledge.store_ref("my_store")
+      :ok = Vaos.Knowledge.assert(store, {"alice", "knows", "bob"})
+      {:ok, results} = Vaos.Knowledge.sparql(store, "SELECT ?x WHERE { ?x <knows> <bob> }")
   """
 
   alias Vaos.Knowledge.Store
 
-  @doc "Open or connect to a named store."
+  @type name :: String.t()
+  @type triple :: {String.t(), String.t(), String.t()}
+  @type pattern :: keyword()
+
+  @doc "Open or connect to a named store. Returns {:ok, pid}."
+  @spec open(name(), keyword()) :: {:ok, pid()} | {:error, term()}
   def open(name, opts \\ []) do
     Store.open(name, opts)
   end
 
   @doc """
+  Return the store name for use with all other API functions.
+  Useful when you want a named reference rather than using the raw string.
+  The store must already be open (see `open/2`).
+  """
+  @spec store_ref(name()) :: name()
+  def store_ref(name) when is_binary(name), do: name
+
+  @doc """
   Assert a triple into the store. Returns :ok or {:error, :invalid_triple}
   if any component is not a non-empty binary string.
   """
+  @spec assert(name(), triple()) :: :ok | {:error, :invalid_triple}
   def assert(name, {s, p, o}) when is_binary(s) and is_binary(p) and is_binary(o) do
     Store.assert(name, {s, p, o})
   end
 
   def assert(_name, _triple), do: {:error, :invalid_triple}
 
-  @doc "Assert multiple triples."
+  @doc "Assert multiple triples. Skips any triple that is not {binary, binary, binary}."
+  @spec assert_many(name(), [triple()]) :: :ok
   def assert_many(name, triples) do
     Store.assert_many(name, triples)
   end
 
-  @doc "Retract a triple from the store."
+  @doc "Retract a triple from the store. No-op if the triple does not exist."
+  @spec retract(name(), triple()) :: :ok
   def retract(name, {s, p, o}) do
     Store.retract(name, {s, p, o})
   end
 
-  @doc "Query triples by pattern."
+  @doc """
+  Query triples by pattern. Accepts keyword options: subject, predicate, object.
+  Unspecified components are wildcards. Returns {:ok, [triple()]}.
+  """
+  @spec query(name(), pattern()) :: {:ok, [triple()]}
   def query(name, pattern \\ []) do
     Store.query(name, pattern)
   end
 
-  @doc "Count triples in the store."
+  @doc "Count triples in the store. Returns {:ok, non_neg_integer()}."
+  @spec count(name()) :: {:ok, non_neg_integer()}
   def count(name) do
     Store.count(name)
   end
 
-  @doc "Return all triples in the store."
+  @doc "Return all triples in the store as {:ok, [triple()]}."
+  @spec all_triples(name()) :: {:ok, [triple()]}
   def all_triples(name) do
     Store.all_triples(name)
   end
 
-  @doc "Execute a SPARQL query string."
+  @doc """
+  Execute a SPARQL query string. Supports SELECT, INSERT DATA, DELETE DATA.
+  Returns {:ok, results} or {:error, reason}.
+  """
+  @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
   def sparql(name, query_string) do
     Store.sparql(name, query_string)
   end
@@ -59,6 +92,7 @@ defmodule Vaos.Knowledge do
   Returns {:ok, rounds} where rounds is the number of fixpoint iterations.
   Accepts opts: [max_rounds: integer] (default 100).
   """
+  @spec materialize(name(), keyword()) :: {:ok, non_neg_integer()}
   def materialize(name, opts \\ []) do
     Store.materialize(name, opts)
   end

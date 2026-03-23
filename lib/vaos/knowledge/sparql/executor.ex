@@ -1,10 +1,14 @@
 defmodule Vaos.Knowledge.Sparql.Executor do
   @moduledoc "Executes parsed SPARQL queries against a backend."
 
+  @type triple :: {String.t(), String.t(), String.t()}
+  @type binding :: %{optional(String.t()) => String.t()}
+
   @doc """
   Execute a parsed query. Returns {result, new_state}.
   result is the value to reply with, new_state is the possibly-updated backend state.
   """
+  @spec execute(map(), module(), term()) :: {term(), term()}
   def execute(%{type: :select} = query, backend, state) do
     {:ok, all} = backend.all_triples(state)
     bindings = match_patterns(query.patterns, all)
@@ -64,6 +68,7 @@ defmodule Vaos.Knowledge.Sparql.Executor do
 
   # --- Pattern Matching Engine ---
 
+  @spec match_patterns([tuple()], [triple()]) :: [binding()]
   defp match_patterns([], _triples), do: [%{}]
 
   defp match_patterns([pattern | rest], triples) do
@@ -75,6 +80,7 @@ defmodule Vaos.Knowledge.Sparql.Executor do
     end
   end
 
+  @spec match_triple(tuple(), triple(), binding()) :: binding() | nil
   defp match_triple({s_pat, p_pat, o_pat}, {s, p, o}, binding) do
     with {:ok, b1} <- bind_term(s_pat, s, binding),
          {:ok, b2} <- bind_term(p_pat, p, b1),
@@ -85,6 +91,7 @@ defmodule Vaos.Knowledge.Sparql.Executor do
     end
   end
 
+  @spec bind_term(tuple(), String.t(), binding()) :: {:ok, binding()} | :mismatch
   defp bind_term({:var, name}, value, binding) do
     case Map.get(binding, name) do
       nil -> {:ok, Map.put(binding, name, value)}
