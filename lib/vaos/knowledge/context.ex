@@ -6,7 +6,8 @@ defmodule Vaos.Knowledge.Context do
   - Relationship: object matches "prefix:localname" where prefix and localname
     are non-empty, contain no spaces or slashes, and there is exactly one colon.
     Examples: "user:bob", "team:alpha", "rdf:type".
-    NOT matched: URLs ("http://..."), timestamps ("2024-01:00"), values with spaces.
+    NOT matched: URLs ("http://..."), timestamps ("2024-01:00"), values with spaces,
+    host:port patterns ("localhost:4000").
   - Property: everything else (plain strings, URLs, numbers, timestamps).
   """
 
@@ -71,7 +72,9 @@ defmodule Vaos.Knowledge.Context do
   # - no slashes (rules out URLs like http://... or https://...)
   # - no spaces in either part
   # - both prefix and localname are non-empty
+  # - prefix starts with a letter
   # - localname has no further colons (rules out "HH:MM:SS" timestamps)
+  # - localname is NOT purely numeric (rules out "localhost:4000" host:port patterns)
   defp namespace_ref?(value) when is_binary(value) do
     case String.split(value, ":", parts: 2) do
       [prefix, local] ->
@@ -79,7 +82,8 @@ defmodule Vaos.Knowledge.Context do
           local != "" and
           String.match?(prefix, ~r/^[a-zA-Z]/) and
           not String.contains?(prefix, ["/", " "]) and
-          not String.contains?(local, ["/", " ", ":"])
+          not String.contains?(local, ["/", " ", ":"]) and
+          not String.match?(local, ~r/^\d+$/)
 
       _ ->
         false

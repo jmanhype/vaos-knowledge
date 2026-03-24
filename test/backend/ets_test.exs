@@ -4,8 +4,9 @@ defmodule Vaos.Knowledge.Backend.ETSTest do
   alias Vaos.Knowledge.Backend.ETS
 
   setup do
-    {:ok, state} = ETS.init(name: :"test_#{System.unique_integer([:positive])}")
-    %{state: state}
+    dir = Path.join(System.tmp_dir!(), "vaos_kg_ets_#{:erlang.phash2(make_ref())}")
+    {:ok, state} = ETS.init(name: :"test_#{System.unique_integer([:positive])}", journal_dir: dir)
+    %{state: state, journal_dir: dir}
   end
 
   test "assert and query round-trip", %{state: state} do
@@ -106,5 +107,61 @@ defmodule Vaos.Knowledge.Backend.ETSTest do
 
   test "assert rejects non-binary arguments", %{state: state} do
     assert {:error, :invalid_triple} = ETS.assert(state, {1, "knows", "bob"})
+  end
+
+  test "assert_many entries survive journal replay" do
+    dir = Path.join(System.tmp_dir!(), "vaos_kg_jrnl_many_#{:erlang.phash2(make_ref())}")
+    {:ok, state} = ETS.init(name: :jrnl_many, journal_dir: dir)
+    {:ok, _} = ETS.assert_many(state, [{"x", "y", "z"}, {"m", "n", "o"}])
+    ETS.cleanup(state)
+
+    {:ok, state2} = ETS.init(name: :jrnl_many, journal_dir: dir)
+    {:ok, count} = ETS.count(state2)
+    assert count == 2
+    {:ok, results} = ETS.query(state2, subject: "x")
+    assert results == [{"x", "y", "z"}]
+    ETS.cleanup(state2)
+    File.rm_rf!(dir)
+  end
+
+  test "retract entries are journaled and replayed correctly" do
+    dir = Path.join(System.tmp_dir!(), "vaos_kg_retract_#{:erlang.phash2(make_ref())}")
+    {:ok, state} = ETS.init(name: :retract_jrnl, journal_dir: dir)
+    {:ok, state} = ETS.assert(state, {"a", "b", "c"})
+    {:ok, state} = ETS.assert(state, {"d", "e", "f"})
+    {:ok, state} = ETS.retract(state, {"a", "b", "c"})
+    ETS.cleanup(state)
+
+    {:ok, state2} = ETS.init(name: :retract_jrnl, journal_dir: dir)
+    {:ok, count2} = ETS.count(state2)
+    assert count2 == 1
+    {:ok, results} = ETS.query(state2, [])
+    assert results == [{"d", "e", "f"}]
+    ETS.cleanup(state2)
+    File.rm_rf!(dir)
+  end
+
+  test "compact_journal rewrites journal with only current triples" do
+    dir = Path.join(System.tmp_dir!(), "vaos_kg_compact_#{:erlang.phash2(make_ref())}")
+    {:ok, state} = ETS.init(name: :compact_jrnl, journal_dir: dir)
+    {:ok, state} = ETS.assert(state, {"a", "b", "c"})
+    {:ok, state} = ETS.assert(state, {"d", "e", "f"})
+    {:ok, state} = ETS.retract(state, {"a", "b", "c"})
+
+    lines_before = state.journal_path |> File.read!() |> String.split("\n", trim: true)
+    assert length(lines_before) == 3
+
+    {:ok, compacted_count} = ETS.compact_journal(state)
+    assert compacted_count == 1
+
+    lines_after = state.journal_path |> File.read!() |> String.split("\n", trim: true)
+    assert length(lines_after) == 1
+
+    ETS.cleanup(state)
+    {:ok, state2} = ETS.init(name: :compact_jrnl, journal_dir: dir)
+    {:ok, count} = ETS.count(state2)
+    assert count == 1
+    ETS.cleanup(state2)
+    File.rm_rf!(dir)
   end
 end

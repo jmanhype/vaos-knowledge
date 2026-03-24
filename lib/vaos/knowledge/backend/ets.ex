@@ -1,7 +1,7 @@
 defmodule Vaos.Knowledge.Backend.ETS do
   @moduledoc """
   ETS-backed triple store with 3-way indexing (SPO, POS, OSP).
-  Provides O(1) lookup on any triple component.
+  Provides O(1) lookup on any triple component via :ets.match_object.
   """
 
   @behaviour Vaos.Knowledge.Backend.Behaviour
@@ -19,7 +19,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
     pos = :ets.new(:"#{name}_pos_#{ts}", [:set, :public])
     osp = :ets.new(:"#{name}_osp_#{ts}", [:set, :public])
 
-    journal_dir = Keyword.get(opts, :journal_dir, if(Mix.env() == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])), else: Path.join(System.user_home!(), ".vaos/knowledge")))
+    journal_dir = Keyword.get(opts, :journal_dir, if(Mix.env() == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])) <> "_" <> to_string(:os.system_time(:millisecond)), else: Path.join(System.user_home!(), ".vaos/knowledge")))
     File.mkdir_p!(journal_dir)
     journal_path = Path.join(journal_dir, "#{name}.jsonl")
     state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path}
@@ -49,6 +49,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
           :ets.insert(state.spo, {{s, p, o}})
           :ets.insert(state.pos, {{p, o, s}})
           :ets.insert(state.osp, {{o, s, p}})
+          journal_write(state, "assert", {s, p, o})
 
         _invalid ->
           :skip
@@ -101,46 +102,40 @@ defmodule Vaos.Knowledge.Backend.ETS do
     end
   end
 
-  # Subject specified — scan SPO table
+  # Subject specified — prefix match on SPO index
   defp do_query(state, s, nil, nil) when not is_nil(s) do
-    :ets.tab2list(state.spo)
-    |> Enum.filter(fn {{subj, _p, _o}} -> subj == s end)
+    :ets.match_object(state.spo, {{s, :_, :_}})
     |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
   end
 
-  # Predicate specified — scan POS table
+  # Predicate specified — prefix match on POS index
   defp do_query(state, nil, p, nil) when not is_nil(p) do
-    :ets.tab2list(state.pos)
-    |> Enum.filter(fn {{pred, _o, _s}} -> pred == p end)
-    |> Enum.map(fn {{pred, obj, subj}} -> {subj, pred, obj} end)
+    :ets.match_object(state.pos, {{p, :_, :_}})
+    |> Enum.map(fn {{_pred, obj, subj}} -> {subj, p, obj} end)
   end
 
-  # Object specified — scan OSP table
+  # Object specified — prefix match on OSP index
   defp do_query(state, nil, nil, o) when not is_nil(o) do
-    :ets.tab2list(state.osp)
-    |> Enum.filter(fn {{obj, _s, _p}} -> obj == o end)
-    |> Enum.map(fn {{obj, subj, pred}} -> {subj, pred, obj} end)
+    :ets.match_object(state.osp, {{o, :_, :_}})
+    |> Enum.map(fn {{_obj, subj, pred}} -> {subj, pred, o} end)
   end
 
-  # Subject + Predicate — scan SPO
+  # Subject + Predicate — prefix match on SPO index
   defp do_query(state, s, p, nil) when not is_nil(s) and not is_nil(p) do
-    :ets.tab2list(state.spo)
-    |> Enum.filter(fn {{subj, pred, _o}} -> subj == s and pred == p end)
+    :ets.match_object(state.spo, {{s, p, :_}})
     |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
   end
 
-  # Subject + Object — scan SPO
+  # Subject + Object — match on SPO with wildcard predicate
   defp do_query(state, s, nil, o) when not is_nil(s) and not is_nil(o) do
-    :ets.tab2list(state.spo)
-    |> Enum.filter(fn {{subj, _p, obj}} -> subj == s and obj == o end)
+    :ets.match_object(state.spo, {{s, :_, o}})
     |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
   end
 
-  # Predicate + Object — scan POS
+  # Predicate + Object — prefix match on POS index
   defp do_query(state, nil, p, o) when not is_nil(p) and not is_nil(o) do
-    :ets.tab2list(state.pos)
-    |> Enum.filter(fn {{pred, obj, _s}} -> pred == p and obj == o end)
-    |> Enum.map(fn {{pred, obj, subj}} -> {subj, pred, obj} end)
+    :ets.match_object(state.pos, {{p, o, :_}})
+    |> Enum.map(fn {{_pred, _obj, subj}} -> {subj, p, o} end)
   end
 
   # No filters — return all
@@ -153,8 +148,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   defp journal_write(%{journal_path: nil}, _op, _triple), do: :ok
   defp journal_write(%{journal_path: path}, op, {s, p, o}) do
-    line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "
-"
+    line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
     File.write!(path, line, [:append])
   rescue
     _ -> :ok
@@ -190,8 +184,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
     if state.journal_path do
       {:ok, triples} = all_triples(state)
       lines = Enum.map(triples, fn {s, p, o} ->
-        Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "
-"
+        Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "\n"
       end)
       File.write!(state.journal_path, lines)
       {:ok, length(triples)}

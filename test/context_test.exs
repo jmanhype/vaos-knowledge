@@ -80,6 +80,30 @@ defmodule Vaos.Knowledge.ContextTest do
       assert ctx.properties == []
       assert ctx.relationships == []
     end
+
+    test "localhost:4000 is classified as a property, not a relationship", %{store: store} do
+      :ok = Vaos.Knowledge.assert(store, {"agent1", "endpoint", "localhost:4000"})
+      ctx = Context.for_agent(store, agent_id: "agent1")
+      assert length(ctx.properties) == 1
+      assert length(ctx.relationships) == 0
+    end
+
+    test "host:port patterns with numeric ports are properties", %{store: store} do
+      :ok = Vaos.Knowledge.assert_many(store, [
+        {"agent1", "redis", "redis:6379"},
+        {"agent1", "db", "postgres:5432"}
+      ])
+      ctx = Context.for_agent(store, agent_id: "agent1")
+      assert length(ctx.properties) == 2
+      assert length(ctx.relationships) == 0
+    end
+
+    test "rdf:type is still a relationship", %{store: store} do
+      :ok = Vaos.Knowledge.assert(store, {"agent1", "type", "rdf:type"})
+      ctx = Context.for_agent(store, agent_id: "agent1")
+      assert length(ctx.relationships) == 1
+      assert length(ctx.properties) == 0
+    end
   end
 
   describe "to_prompt/1" do
