@@ -6,6 +6,10 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   @behaviour Vaos.Knowledge.Backend.Behaviour
 
+  @mix_env Mix.env()
+
+  require Logger
+
   defstruct [:spo, :pos, :osp, :journal_path]
 
   @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid()}
@@ -15,11 +19,11 @@ defmodule Vaos.Knowledge.Backend.ETS do
   def init(opts) do
     name = Keyword.get(opts, :name, :default)
     ts = System.unique_integer([:positive])
-    spo = :ets.new(:"#{name}_spo_#{ts}", [:set, :public])
-    pos = :ets.new(:"#{name}_pos_#{ts}", [:set, :public])
-    osp = :ets.new(:"#{name}_osp_#{ts}", [:set, :public])
+    spo = :ets.new(:"#{name}_spo_#{ts}", [:set, :protected])
+    pos = :ets.new(:"#{name}_pos_#{ts}", [:set, :protected])
+    osp = :ets.new(:"#{name}_osp_#{ts}", [:set, :protected])
 
-    journal_dir = Keyword.get(opts, :journal_dir, if(Mix.env() == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])) <> "_" <> to_string(:os.system_time(:millisecond)), else: Path.join(System.user_home!(), ".vaos/knowledge")))
+    journal_dir = Keyword.get(opts, :journal_dir, if(@mix_env == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])) <> "_" <> to_string(:os.system_time(:millisecond)), else: Path.join(System.user_home!(), ".vaos/knowledge")))
     File.mkdir_p!(journal_dir)
     journal_path = Path.join(journal_dir, "#{name}.jsonl")
     state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path}
@@ -151,7 +155,10 @@ defmodule Vaos.Knowledge.Backend.ETS do
     line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
     File.write!(path, line, [:append])
   rescue
-    _ -> :ok
+    e ->
+      msg = Exception.message(e)
+      Logger.error("[vaos_knowledge] Journal write failed: " <> msg)
+      :ok
   end
 
   defp replay_journal(%{journal_path: nil} = state), do: state

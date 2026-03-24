@@ -7,7 +7,7 @@ defmodule Vaos.Knowledge.Store do
     %{
       id: {__MODULE__, Keyword.get(opts, :name, :default)},
       start: {__MODULE__, :start_link, [opts]},
-      restart: :temporary
+      restart: :permanent
     }
   end
 
@@ -80,7 +80,7 @@ defmodule Vaos.Knowledge.Store do
   @doc "Execute a SPARQL query string."
   @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
   def sparql(name, query_string) when is_binary(query_string) do
-    GenServer.call(via(name), {:sparql, query_string})
+    GenServer.call(via(name), {:sparql, query_string}, 30_000)
   end
 
   def sparql(_name, _query), do: {:error, :invalid_query}
@@ -88,7 +88,7 @@ defmodule Vaos.Knowledge.Store do
   @doc "Run OWL 2 RL forward-chaining materialization through the store GenServer."
   @spec materialize(name(), keyword()) :: {:ok, non_neg_integer()}
   def materialize(name, opts \\ []) do
-    GenServer.call(via(name), {:materialize, opts})
+    GenServer.call(via(name), {:materialize, opts}, 60_000)
   end
 
   defp via(name), do: {:via, Registry, {Vaos.Knowledge.Registry, name}}

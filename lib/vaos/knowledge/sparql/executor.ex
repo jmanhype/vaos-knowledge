@@ -35,9 +35,9 @@ defmodule Vaos.Knowledge.Sparql.Executor do
           end
           Enum.sort_by(projected, fn row ->
             val = Map.get(row, var, "")
-            case Integer.parse(val) do
-              {n, ""} -> n
-              _ -> val
+            case Integer.parse(to_string(val)) do
+              {n, ""} -> {0, n}
+              _ -> {1, to_string(val)}
             end
           end, sorter)
 
