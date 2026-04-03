@@ -1,5 +1,15 @@
 defmodule Vaos.Knowledge.Store do
-  @moduledoc "GenServer that manages a named triple store."
+  @moduledoc """
+  GenServer that manages a named triple store.
+
+  Read operations (query, count, all_triples, sparql SELECT) bypass the
+  GenServer and read ETS directly in the caller's process. This eliminates
+  the single-process bottleneck where SPARQL full-table scans blocked all
+  other callers.
+
+  Only writes (assert, assert_many, retract) and mutations (INSERT DATA,
+  DELETE DATA, materialize) go through the GenServer for serialization.
+  """
 
   use GenServer
 
@@ -48,6 +58,8 @@ defmodule Vaos.Knowledge.Store do
     end
   end
 
+  # --- Write operations (serialized through GenServer) ---
+
   @doc "Assert a triple. Returns :ok or {:error, :invalid_triple}."
   @spec assert(name(), triple()) :: :ok | {:error, :invalid_triple}
   def assert(name, {s, p, o})
@@ -59,28 +71,65 @@ defmodule Vaos.Knowledge.Store do
 
   @doc "Assert multiple triples. Silently skips invalid triples."
   @spec assert_many(name(), [triple()]) :: :ok
-  def assert_many(name, triples), do: GenServer.call(via(name), {:assert_many, triples})
+  def assert_many(name, triples) do
+    GenServer.call(via(name), {:assert_many, triples}, 30_000)
+  end
 
   @doc "Retract a triple. No-op if not present."
   @spec retract(name(), triple()) :: :ok
   def retract(name, {s, p, o}), do: GenServer.call(via(name), {:retract, {s, p, o}})
 
+  # --- Read operations (bypass GenServer, read ETS directly) ---
+
   @doc "Query triples by pattern keyword list (subject:, predicate:, object:)."
   @spec query(name(), keyword()) :: {:ok, [triple()]}
-  def query(name, pattern), do: GenServer.call(via(name), {:query, pattern})
+  def query(name, pattern) do
+    case get_ets_refs(name) do
+      {:ok, ets_state} -> ETS.query(ets_state, pattern)
+      error -> error
+    end
+  end
 
   @doc "Count triples in the store."
   @spec count(name()) :: {:ok, non_neg_integer()}
-  def count(name), do: GenServer.call(via(name), :count)
+  def count(name) do
+    case get_ets_refs(name) do
+      {:ok, ets_state} -> ETS.count(ets_state)
+      error -> error
+    end
+  end
 
   @doc "Return all triples."
   @spec all_triples(name()) :: {:ok, [triple()]}
-  def all_triples(name), do: GenServer.call(via(name), :all_triples)
+  def all_triples(name) do
+    case get_ets_refs(name) do
+      {:ok, ets_state} -> ETS.all_triples(ets_state)
+      error -> error
+    end
+  end
 
   @doc "Execute a SPARQL query string."
   @spec sparql(name(), String.t()) :: {:ok, term()} | {:error, term()}
   def sparql(name, query_string) when is_binary(query_string) do
-    GenServer.call(via(name), {:sparql, query_string}, 30_000)
+    case Sparql.Parser.parse(query_string) do
+      {:ok, %{type: :select} = parsed} ->
+        # SELECT queries are read-only — execute directly in caller's process
+        case get_ets_refs(name) do
+          {:ok, ets_state} ->
+            {result, _state} = Sparql.Executor.execute(parsed, ETS, ets_state)
+            result
+
+          error ->
+            error
+        end
+
+      {:ok, parsed} ->
+        # INSERT/DELETE mutations go through GenServer
+        GenServer.call(via(name), {:sparql_execute, parsed}, 30_000)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   def sparql(_name, _query), do: {:error, :invalid_query}
@@ -91,6 +140,28 @@ defmodule Vaos.Knowledge.Store do
     GenServer.call(via(name), {:materialize, opts}, 60_000)
   end
 
+  @doc "Get ETS table references for direct read access. Returns {:ok, ets_state} or {:error, :not_running}."
+  @spec get_ets_refs(name()) :: {:ok, ETS.state()} | {:error, :not_running}
+  def get_ets_refs(name) do
+    case GenServer.whereis(via(name)) do
+      nil -> {:error, :not_running}
+      pid ->
+        # Fast path: get ETS refs from process dictionary (set during init)
+        case :erlang.process_info(pid, :dictionary) do
+          {:dictionary, dict} ->
+            case List.keyfind(dict, :ets_refs, 0) do
+              {:ets_refs, refs} -> {:ok, refs}
+              nil ->
+                # Fallback: ask GenServer (only happens if init hasn't set it yet)
+                GenServer.call(via(name), :get_ets_refs, 5_000)
+            end
+
+          nil ->
+            {:error, :not_running}
+        end
+    end
+  end
+
   defp via(name), do: {:via, Registry, {Vaos.Knowledge.Registry, name}}
 
   # --- Server Callbacks ---
@@ -98,6 +169,12 @@ defmodule Vaos.Knowledge.Store do
   @impl true
   def init({backend, opts}) do
     {:ok, backend_state} = backend.init(opts)
+
+    # Store ETS refs in process dictionary for lockless read access
+    if is_struct(backend_state, ETS) do
+      Process.put(:ets_refs, backend_state)
+    end
+
     {:ok, %{backend: backend, state: backend_state}}
   end
 
@@ -122,33 +199,15 @@ defmodule Vaos.Knowledge.Store do
   end
 
   @impl true
-  def handle_call({:query, pattern}, _from, data) do
-    {:ok, results} = data.backend.query(data.state, pattern)
-    {:reply, {:ok, results}, data}
+  def handle_call(:get_ets_refs, _from, data) do
+    {:reply, {:ok, data.state}, data}
   end
 
+  # Pre-parsed SPARQL mutations (INSERT/DELETE) only
   @impl true
-  def handle_call(:count, _from, data) do
-    {:ok, n} = data.backend.count(data.state)
-    {:reply, {:ok, n}, data}
-  end
-
-  @impl true
-  def handle_call(:all_triples, _from, data) do
-    {:ok, triples} = data.backend.all_triples(data.state)
-    {:reply, {:ok, triples}, data}
-  end
-
-  @impl true
-  def handle_call({:sparql, query_string}, _from, data) do
-    case Sparql.Parser.parse(query_string) do
-      {:ok, parsed} ->
-        {result, new_state} = Sparql.Executor.execute(parsed, data.backend, data.state)
-        {:reply, result, %{data | state: new_state}}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, data}
-    end
+  def handle_call({:sparql_execute, parsed}, _from, data) do
+    {result, new_state} = Sparql.Executor.execute(parsed, data.backend, data.state)
+    {:reply, result, %{data | state: new_state}}
   end
 
   @impl true

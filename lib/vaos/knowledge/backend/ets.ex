@@ -47,19 +47,31 @@ defmodule Vaos.Knowledge.Backend.ETS do
   @impl true
   @spec assert_many(state(), [Vaos.Knowledge.Backend.Behaviour.triple()]) :: {:ok, state()}
   def assert_many(state, triples) when is_list(triples) do
-    Enum.each(triples, fn triple ->
-      case triple do
-        {s, p, o} when is_binary(s) and is_binary(p) and is_binary(o) ->
-          :ets.insert(state.spo, {{s, p, o}})
-          :ets.insert(state.pos, {{p, o, s}})
-          :ets.insert(state.osp, {{o, s, p}})
-          journal_write(state, "assert", {s, p, o})
+    # Batch: insert all into ETS first, then write journal once
+    journal_lines =
+      Enum.reduce(triples, [], fn triple, acc ->
+        case triple do
+          {s, p, o} when is_binary(s) and is_binary(p) and is_binary(o) ->
+            :ets.insert(state.spo, {{s, p, o}})
+            :ets.insert(state.pos, {{p, o, s}})
+            :ets.insert(state.osp, {{o, s, p}})
+            [Jason.encode!(%{op: "assert", s: s, p: p, o: o}), "\n" | acc]
 
-        _invalid ->
-          :skip
-      end
-    end)
+          _invalid ->
+            acc
+        end
+      end)
+
+    # Single batched journal write instead of N individual writes
+    if journal_lines != [] and state.journal_path do
+      File.write!(state.journal_path, Enum.reverse(journal_lines), [:append])
+    end
+
     {:ok, state}
+  rescue
+    e ->
+      Logger.error("[vaos_knowledge] Batched journal write failed: #{Exception.message(e)}")
+      {:ok, state}
   end
 
   @impl true
