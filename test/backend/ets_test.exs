@@ -148,6 +148,7 @@ defmodule Vaos.Knowledge.Backend.ETSTest do
     {:ok, state} = ETS.assert(state, {"d", "e", "f"})
     {:ok, state} = ETS.retract(state, {"a", "b", "c"})
 
+    ETS.sync(state)
     lines_before = state.journal_path |> File.read!() |> String.split("\n", trim: true)
     assert length(lines_before) == 3
 

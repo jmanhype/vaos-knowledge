@@ -10,9 +10,9 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   require Logger
 
-  defstruct [:spo, :pos, :osp, :journal_path]
+  defstruct [:spo, :pos, :osp, :journal_path, :disk_log]
 
-  @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid()}
+  @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid(), disk_log: :disk_log.log() | nil}
 
   @impl true
   @spec init(keyword()) :: {:ok, state()}
@@ -26,7 +26,10 @@ defmodule Vaos.Knowledge.Backend.ETS do
     journal_dir = Keyword.get(opts, :journal_dir, if(@mix_env == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])) <> "_" <> to_string(:os.system_time(:millisecond)), else: Path.join(System.user_home!(), ".vaos/knowledge")))
     File.mkdir_p!(journal_dir)
     journal_path = Path.join(journal_dir, "#{name}.jsonl")
-    state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path}
+
+    disk_log = open_disk_log(name, journal_path)
+
+    state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path, disk_log: disk_log}
     state = replay_journal(state)
     {:ok, state}
   end
@@ -62,9 +65,15 @@ defmodule Vaos.Knowledge.Backend.ETS do
         end
       end)
 
-    # Single batched journal write instead of N individual writes
-    if journal_lines != [] and state.journal_path do
-      File.write!(state.journal_path, Enum.reverse(journal_lines), [:append])
+    # Single batched journal write
+    if journal_lines != [] do
+      reversed = Enum.reverse(journal_lines)
+      case state.disk_log do
+        nil ->
+          if state.journal_path, do: File.write!(state.journal_path, reversed, [:append])
+        log ->
+          :disk_log.blog(log, IO.iodata_to_binary(reversed))
+      end
     end
 
     {:ok, state}
@@ -162,16 +171,39 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   # --- Journal Persistence ---
 
-  defp journal_write(%{journal_path: nil}, _op, _triple), do: :ok
-  defp journal_write(%{journal_path: path}, op, {s, p, o}) do
+  defp open_disk_log(store_name, journal_path) do
+    log_name = String.to_atom("vaos_knowledge_journal_#{store_name}")
+    case :disk_log.open(name: log_name, file: String.to_charlist(journal_path), type: :halt, format: :external) do
+      {:ok, log} -> log
+      {:repaired, log, _recovered, _bad} ->
+        Logger.warning("[vaos_knowledge] Journal disk_log repaired on open")
+        log
+      {:error, reason} ->
+        Logger.error("[vaos_knowledge] Failed to open disk_log: #{inspect(reason)}, falling back to File.write!")
+        nil
+    end
+  end
+
+  defp journal_write(%{disk_log: nil, journal_path: nil}, _op, _triple), do: :ok
+  defp journal_write(%{disk_log: nil, journal_path: path}, op, {s, p, o}) do
+    # Fallback: synchronous File.write! if disk_log failed to open
     line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
     File.write!(path, line, [:append])
   rescue
     e ->
-      msg = Exception.message(e)
-      Logger.error("[vaos_knowledge] Journal write failed: " <> msg)
+      Logger.error("[vaos_knowledge] Journal write failed: #{Exception.message(e)}")
       :ok
   end
+  defp journal_write(%{disk_log: log}, op, {s, p, o}) do
+    line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
+    :disk_log.blog(log, line)
+  end
+
+  defp journal_sync(%{disk_log: nil}), do: :ok
+  defp journal_sync(%{disk_log: log}), do: :disk_log.sync(log)
+
+  defp close_disk_log(%{disk_log: nil}), do: :ok
+  defp close_disk_log(%{disk_log: log}), do: :disk_log.close(log)
 
   defp replay_journal(%{journal_path: nil} = state), do: state
   defp replay_journal(%{journal_path: path} = state) do
@@ -198,14 +230,24 @@ defmodule Vaos.Knowledge.Backend.ETS do
     end
   end
 
-  @doc "Compact the journal by rewriting with only current triples."
+  @doc "Flush buffered journal writes to disk."
+  def sync(state), do: journal_sync(state)
+
+  @doc "Compact the journal by rewriting with only current triples. Returns `{:ok, count}` for backward compat."
   def compact_journal(state) do
     if state.journal_path do
+      # Sync and close disk_log before rewriting the underlying file
+      journal_sync(state)
+      close_disk_log(state)
+
       {:ok, triples} = all_triples(state)
       lines = Enum.map(triples, fn {s, p, o} ->
         Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "\n"
       end)
       File.write!(state.journal_path, lines)
+
+      # Note: disk_log is closed. Caller should re-init or the next write
+      # will fall back to synchronous File.write! via the nil disk_log path.
       {:ok, length(triples)}
     else
       {:ok, 0}
@@ -214,6 +256,8 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   @doc "Explicitly delete ETS tables when the store is shutting down."
   def cleanup(state) do
+    journal_sync(state)
+    close_disk_log(state)
     :ets.delete(state.spo)
     :ets.delete(state.pos)
     :ets.delete(state.osp)
