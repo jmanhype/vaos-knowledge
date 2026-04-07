@@ -61,12 +61,30 @@ defmodule Vaos.KnowledgeTest do
     test "query by predicate" do
       name = :"api_pred_#{System.unique_integer([:positive])}"
       {:ok, _} = Vaos.Knowledge.open(name)
-      :ok = Vaos.Knowledge.assert_many(name, [
-        {"alice", "knows", "bob"},
-        {"alice", "likes", "carol"}
-      ])
+
+      :ok =
+        Vaos.Knowledge.assert_many(name, [
+          {"alice", "knows", "bob"},
+          {"alice", "likes", "carol"}
+        ])
+
       {:ok, results} = Vaos.Knowledge.query(name, predicate: "knows")
       assert results == [{"alice", "knows", "bob"}]
+    end
+
+    test "query/3 supports limit" do
+      name = :"api_limit_#{System.unique_integer([:positive])}"
+      {:ok, _} = Vaos.Knowledge.open(name)
+
+      :ok =
+        Vaos.Knowledge.assert_many(
+          name,
+          for(i <- 1..15, do: {"subject-#{i}", "summary", "object-#{i}"})
+        )
+
+      {:ok, results} = Vaos.Knowledge.query(name, [predicate: "summary"], limit: 6)
+      assert length(results) == 6
+      assert Enum.all?(results, fn {_s, p, _o} -> p == "summary" end)
     end
   end
 
@@ -85,13 +103,19 @@ defmodule Vaos.KnowledgeTest do
     test "forward-chains OWL 2 RL rules through the store" do
       name = :"api_mat_#{System.unique_integer([:positive])}"
       {:ok, _} = Vaos.Knowledge.open(name)
-      :ok = Vaos.Knowledge.assert_many(name, [
-        {"A", "rdfs:subClassOf", "B"},
-        {"B", "rdfs:subClassOf", "C"}
-      ])
+
+      :ok =
+        Vaos.Knowledge.assert_many(name, [
+          {"A", "rdfs:subClassOf", "B"},
+          {"B", "rdfs:subClassOf", "C"}
+        ])
+
       {:ok, rounds} = Vaos.Knowledge.materialize(name)
       assert rounds >= 1
-      {:ok, results} = Vaos.Knowledge.query(name, subject: "A", predicate: "rdfs:subClassOf", object: "C")
+
+      {:ok, results} =
+        Vaos.Knowledge.query(name, subject: "A", predicate: "rdfs:subClassOf", object: "C")
+
       assert length(results) == 1
     end
   end
@@ -166,7 +190,10 @@ defmodule Vaos.KnowledgeTest do
       name = :"api_uri_\#{System.unique_integer([:positive])}"
       {:ok, _} = Vaos.Knowledge.open(name)
       :ok = Vaos.Knowledge.assert(name, {"alice", "http://schema.org/knows", "bob"})
-      {:ok, results} = Vaos.Knowledge.sparql(name, "SELECT ?s ?o WHERE { ?s <http://schema.org/knows> ?o }")
+
+      {:ok, results} =
+        Vaos.Knowledge.sparql(name, "SELECT ?s ?o WHERE { ?s <http://schema.org/knows> ?o }")
+
       assert length(results) == 1
       assert hd(results)["s"] == "alice"
     end
@@ -174,10 +201,15 @@ defmodule Vaos.KnowledgeTest do
     test "INSERT DATA with dotted URIs round-trips" do
       name = :"api_uri_ins_\#{System.unique_integer([:positive])}"
       {:ok, _} = Vaos.Knowledge.open(name)
-      {:ok, :inserted, 1} = Vaos.Knowledge.sparql(name, "INSERT DATA { <http://ex.co/a> <http://ex.co/b> <http://ex.co/c> }")
+
+      {:ok, :inserted, 1} =
+        Vaos.Knowledge.sparql(
+          name,
+          "INSERT DATA { <http://ex.co/a> <http://ex.co/b> <http://ex.co/c> }"
+        )
+
       {:ok, count} = Vaos.Knowledge.count(name)
       assert count == 1
     end
   end
-
 end

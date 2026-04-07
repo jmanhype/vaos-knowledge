@@ -62,6 +62,18 @@ defmodule Vaos.Knowledge.Backend.ETSTest do
     assert length(results) == 2
   end
 
+  test "query limit bounds a large predicate result set", %{state: state} do
+    triples =
+      for i <- 1..20 do
+        {"subject-#{i}", "summary", "object-#{i}"}
+      end
+
+    {:ok, state} = ETS.assert_many(state, triples)
+    {:ok, results} = ETS.query(state, [predicate: "summary"], limit: 5)
+    assert length(results) == 5
+    assert Enum.all?(results, fn {_s, p, _o} -> p == "summary" end)
+  end
+
   test "count returns number of triples", %{state: state} do
     {:ok, count} = ETS.count(state)
     assert count == 0

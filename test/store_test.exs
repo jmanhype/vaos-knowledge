@@ -38,6 +38,20 @@ defmodule Vaos.Knowledge.StoreTest do
     end
   end
 
+  describe "query/3" do
+    test "respects a result limit", %{store: store} do
+      :ok =
+        Store.assert_many(
+          store,
+          for(i <- 1..12, do: {"subject-#{i}", "summary", "object-#{i}"})
+        )
+
+      {:ok, results} = Store.query(store, [predicate: "summary"], limit: 4)
+      assert length(results) == 4
+      assert Enum.all?(results, fn {_s, p, _o} -> p == "summary" end)
+    end
+  end
+
   describe "assert_many/2" do
     test "inserts multiple triples in one call", %{store: store} do
       :ok = Store.assert_many(store, [{"a", "b", "c"}, {"d", "e", "f"}])
@@ -87,13 +101,18 @@ defmodule Vaos.Knowledge.StoreTest do
 
   describe "materialize/2" do
     test "runs forward-chaining through the store GenServer", %{store: store} do
-      :ok = Store.assert_many(store, [
-        {"Dog", "rdfs:subClassOf", "Animal"},
-        {"Puppy", "rdfs:subClassOf", "Dog"}
-      ])
+      :ok =
+        Store.assert_many(store, [
+          {"Dog", "rdfs:subClassOf", "Animal"},
+          {"Puppy", "rdfs:subClassOf", "Dog"}
+        ])
+
       {:ok, rounds} = Store.materialize(store)
       assert rounds >= 1
-      {:ok, results} = Store.query(store, subject: "Puppy", predicate: "rdfs:subClassOf", object: "Animal")
+
+      {:ok, results} =
+        Store.query(store, subject: "Puppy", predicate: "rdfs:subClassOf", object: "Animal")
+
       assert length(results) == 1
     end
 

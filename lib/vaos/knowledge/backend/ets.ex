@@ -12,7 +12,12 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   defstruct [:spo, :pos, :osp, :journal_path, :disk_log]
 
-  @type state :: %__MODULE__{spo: :ets.tid(), pos: :ets.tid(), osp: :ets.tid(), disk_log: :disk_log.log() | nil}
+  @type state :: %__MODULE__{
+          spo: :ets.tid(),
+          pos: :ets.tid(),
+          osp: :ets.tid(),
+          disk_log: :disk_log.log() | nil
+        }
 
   @impl true
   @spec init(keyword()) :: {:ok, state()}
@@ -23,13 +28,33 @@ defmodule Vaos.Knowledge.Backend.ETS do
     pos = :ets.new(:"#{name}_pos_#{ts}", [:set, :protected])
     osp = :ets.new(:"#{name}_osp_#{ts}", [:set, :protected])
 
-    journal_dir = Keyword.get(opts, :journal_dir, if(@mix_env == :test, do: System.tmp_dir!() <> "/vaos_kg_test_" <> to_string(System.unique_integer([:positive])) <> "_" <> to_string(:os.system_time(:millisecond)), else: Path.join(System.user_home!(), ".vaos/knowledge")))
+    journal_dir =
+      Keyword.get(
+        opts,
+        :journal_dir,
+        if(@mix_env == :test,
+          do:
+            System.tmp_dir!() <>
+              "/vaos_kg_test_" <>
+              to_string(System.unique_integer([:positive])) <>
+              "_" <> to_string(:os.system_time(:millisecond)),
+          else: Path.join(System.user_home!(), ".vaos/knowledge")
+        )
+      )
+
     File.mkdir_p!(journal_dir)
     journal_path = Path.join(journal_dir, "#{name}.jsonl")
 
     disk_log = open_disk_log(name, journal_path)
 
-    state = %__MODULE__{spo: spo, pos: pos, osp: osp, journal_path: journal_path, disk_log: disk_log}
+    state = %__MODULE__{
+      spo: spo,
+      pos: pos,
+      osp: osp,
+      journal_path: journal_path,
+      disk_log: disk_log
+    }
+
     state = replay_journal(state)
     {:ok, state}
   end
@@ -68,9 +93,11 @@ defmodule Vaos.Knowledge.Backend.ETS do
     # Single batched journal write
     if journal_lines != [] do
       reversed = Enum.reverse(journal_lines)
+
       case state.disk_log do
         nil ->
           if state.journal_path, do: File.write!(state.journal_path, reversed, [:append])
+
         log ->
           :disk_log.blog(log, IO.iodata_to_binary(reversed))
       end
@@ -95,12 +122,17 @@ defmodule Vaos.Knowledge.Backend.ETS do
 
   @impl true
   @spec query(state(), keyword()) :: {:ok, [Vaos.Knowledge.Backend.Behaviour.triple()]}
-  def query(state, pattern) do
+  def query(state, pattern), do: query(state, pattern, [])
+
+  @impl true
+  @spec query(state(), keyword(), keyword()) :: {:ok, [Vaos.Knowledge.Backend.Behaviour.triple()]}
+  def query(state, pattern, opts) do
     s = Keyword.get(pattern, :subject)
     p = Keyword.get(pattern, :predicate)
     o = Keyword.get(pattern, :object)
+    limit = Keyword.get(opts, :limit)
 
-    results = do_query(state, s, p, o)
+    results = do_query(state, s, p, o, limit)
     {:ok, results}
   end
 
@@ -116,11 +148,12 @@ defmodule Vaos.Knowledge.Backend.ETS do
     triples =
       :ets.tab2list(state.spo)
       |> Enum.map(fn {{s, p, o}} -> {s, p, o} end)
+
     {:ok, triples}
   end
 
   # All three specified — direct lookup
-  defp do_query(state, s, p, o) when not is_nil(s) and not is_nil(p) and not is_nil(o) do
+  defp do_query(state, s, p, o, _limit) when not is_nil(s) and not is_nil(p) and not is_nil(o) do
     case :ets.lookup(state.spo, {s, p, o}) do
       [_] -> [{s, p, o}]
       [] -> []
@@ -128,63 +161,168 @@ defmodule Vaos.Knowledge.Backend.ETS do
   end
 
   # Subject specified — prefix match on SPO index
-  defp do_query(state, s, nil, nil) when not is_nil(s) do
-    :ets.match_object(state.spo, {{s, :_, :_}})
-    |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+  defp do_query(state, s, nil, nil, limit) when not is_nil(s) do
+    limited_index_query(
+      state.spo,
+      [{{{s, :"$1", :"$2"}}, [], [{{s, :"$1", :"$2"}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.spo, {{s, :_, :_}})
+        |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+      end
+    )
   end
 
   # Predicate specified — prefix match on POS index
-  defp do_query(state, nil, p, nil) when not is_nil(p) do
-    :ets.match_object(state.pos, {{p, :_, :_}})
-    |> Enum.map(fn {{_pred, obj, subj}} -> {subj, p, obj} end)
+  defp do_query(state, nil, p, nil, limit) when not is_nil(p) do
+    limited_index_query(
+      state.pos,
+      [{{{p, :"$1", :"$2"}}, [], [{{:"$2", p, :"$1"}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.pos, {{p, :_, :_}})
+        |> Enum.map(fn {{_pred, obj, subj}} -> {subj, p, obj} end)
+      end
+    )
   end
 
   # Object specified — prefix match on OSP index
-  defp do_query(state, nil, nil, o) when not is_nil(o) do
-    :ets.match_object(state.osp, {{o, :_, :_}})
-    |> Enum.map(fn {{_obj, subj, pred}} -> {subj, pred, o} end)
+  defp do_query(state, nil, nil, o, limit) when not is_nil(o) do
+    limited_index_query(
+      state.osp,
+      [{{{o, :"$1", :"$2"}}, [], [{{:"$1", :"$2", o}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.osp, {{o, :_, :_}})
+        |> Enum.map(fn {{_obj, subj, pred}} -> {subj, pred, o} end)
+      end
+    )
   end
 
   # Subject + Predicate — prefix match on SPO index
-  defp do_query(state, s, p, nil) when not is_nil(s) and not is_nil(p) do
-    :ets.match_object(state.spo, {{s, p, :_}})
-    |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+  defp do_query(state, s, p, nil, limit) when not is_nil(s) and not is_nil(p) do
+    limited_index_query(
+      state.spo,
+      [{{{s, p, :"$1"}}, [], [{{s, p, :"$1"}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.spo, {{s, p, :_}})
+        |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+      end
+    )
   end
 
   # Subject + Object — match on SPO with wildcard predicate
-  defp do_query(state, s, nil, o) when not is_nil(s) and not is_nil(o) do
-    :ets.match_object(state.spo, {{s, :_, o}})
-    |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+  defp do_query(state, s, nil, o, limit) when not is_nil(s) and not is_nil(o) do
+    limited_index_query(
+      state.spo,
+      [{{{s, :"$1", o}}, [], [{{s, :"$1", o}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.spo, {{s, :_, o}})
+        |> Enum.map(fn {{subj, pred, obj}} -> {subj, pred, obj} end)
+      end
+    )
   end
 
   # Predicate + Object — prefix match on POS index
-  defp do_query(state, nil, p, o) when not is_nil(p) and not is_nil(o) do
-    :ets.match_object(state.pos, {{p, o, :_}})
-    |> Enum.map(fn {{_pred, _obj, subj}} -> {subj, p, o} end)
+  defp do_query(state, nil, p, o, limit) when not is_nil(p) and not is_nil(o) do
+    limited_index_query(
+      state.pos,
+      [{{{p, o, :"$1"}}, [], [{{:"$1", p, o}}]}],
+      limit,
+      fn ->
+        :ets.match_object(state.pos, {{p, o, :_}})
+        |> Enum.map(fn {{_pred, _obj, subj}} -> {subj, p, o} end)
+      end
+    )
   end
 
   # No filters — return all
-  defp do_query(state, nil, nil, nil) do
-    :ets.tab2list(state.spo)
-    |> Enum.map(fn {{s, p, o}} -> {s, p, o} end)
+  defp do_query(state, nil, nil, nil, limit) do
+    limited_index_query(
+      state.spo,
+      [{{{:"$1", :"$2", :"$3"}}, [], [{{:"$1", :"$2", :"$3"}}]}],
+      limit,
+      fn ->
+        :ets.tab2list(state.spo)
+        |> Enum.map(fn {{s, p, o}} -> {s, p, o} end)
+      end
+    )
+  end
+
+  defp limited_index_query(_table, _match_spec, limit, _fallback)
+       when is_integer(limit) and limit <= 0,
+       do: []
+
+  defp limited_index_query(table, match_spec, limit, _fallback_fun)
+       when is_integer(limit) and limit > 0 do
+    case :ets.select(table, match_spec, limit) do
+      :"$end_of_table" ->
+        []
+
+      {rows, :"$end_of_table"} ->
+        rows
+
+      {rows, continuation} ->
+        fill_select_limit(continuation, rows, limit)
+    end
+  end
+
+  defp limited_index_query(_table, _match_spec, _limit, fallback_fun), do: fallback_fun.()
+
+  defp fill_select_limit(_continuation, rows, limit) when length(rows) >= limit do
+    Enum.take(rows, limit)
+  end
+
+  defp fill_select_limit(continuation, rows, limit) do
+    case :ets.select(continuation) do
+      :"$end_of_table" ->
+        rows
+
+      {more_rows, :"$end_of_table"} ->
+        Enum.take(rows ++ more_rows, limit)
+
+      {more_rows, next_continuation} ->
+        combined = rows ++ more_rows
+
+        if length(combined) >= limit do
+          Enum.take(combined, limit)
+        else
+          fill_select_limit(next_continuation, combined, limit)
+        end
+    end
   end
 
   # --- Journal Persistence ---
 
   defp open_disk_log(store_name, journal_path) do
     log_name = String.to_atom("vaos_knowledge_journal_#{store_name}")
-    case :disk_log.open(name: log_name, file: String.to_charlist(journal_path), type: :halt, format: :external) do
-      {:ok, log} -> log
+
+    case :disk_log.open(
+           name: log_name,
+           file: String.to_charlist(journal_path),
+           type: :halt,
+           format: :external
+         ) do
+      {:ok, log} ->
+        log
+
       {:repaired, log, _recovered, _bad} ->
         Logger.warning("[vaos_knowledge] Journal disk_log repaired on open")
         log
+
       {:error, reason} ->
-        Logger.error("[vaos_knowledge] Failed to open disk_log: #{inspect(reason)}, falling back to File.write!")
+        Logger.error(
+          "[vaos_knowledge] Failed to open disk_log: #{inspect(reason)}, falling back to File.write!"
+        )
+
         nil
     end
   end
 
   defp journal_write(%{disk_log: nil, journal_path: nil}, _op, _triple), do: :ok
+
   defp journal_write(%{disk_log: nil, journal_path: path}, op, {s, p, o}) do
     # Fallback: synchronous File.write! if disk_log failed to open
     line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
@@ -194,6 +332,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
       Logger.error("[vaos_knowledge] Journal write failed: #{Exception.message(e)}")
       :ok
   end
+
   defp journal_write(%{disk_log: log}, op, {s, p, o}) do
     line = Jason.encode!(%{op: op, s: s, p: p, o: o}) <> "\n"
     :disk_log.blog(log, line)
@@ -206,6 +345,7 @@ defmodule Vaos.Knowledge.Backend.ETS do
   defp close_disk_log(%{disk_log: log}), do: :disk_log.close(log)
 
   defp replay_journal(%{journal_path: nil} = state), do: state
+
   defp replay_journal(%{journal_path: path} = state) do
     if File.exists?(path) do
       path
@@ -217,12 +357,15 @@ defmodule Vaos.Knowledge.Backend.ETS do
             :ets.insert(acc.pos, {{p, o, s}})
             :ets.insert(acc.osp, {{o, s, p}})
             acc
+
           {:ok, %{"op" => "retract", "s" => s, "p" => p, "o" => o}} ->
             :ets.delete(acc.spo, {s, p, o})
             :ets.delete(acc.pos, {p, o, s})
             :ets.delete(acc.osp, {o, s, p})
             acc
-          _ -> acc
+
+          _ ->
+            acc
         end
       end)
     else
@@ -241,9 +384,12 @@ defmodule Vaos.Knowledge.Backend.ETS do
       close_disk_log(state)
 
       {:ok, triples} = all_triples(state)
-      lines = Enum.map(triples, fn {s, p, o} ->
-        Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "\n"
-      end)
+
+      lines =
+        Enum.map(triples, fn {s, p, o} ->
+          Jason.encode!(%{op: "assert", s: s, p: p, o: o}) <> "\n"
+        end)
+
       File.write!(state.journal_path, lines)
 
       # Note: disk_log is closed. Caller should re-init or the next write

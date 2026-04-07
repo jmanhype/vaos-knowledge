@@ -44,6 +44,7 @@ defmodule Vaos.Knowledge.Store do
     case GenServer.whereis(via(name)) do
       nil ->
         opts = Keyword.put(opts, :name, name)
+
         case DynamicSupervisor.start_child(
                Vaos.Knowledge.StoreSupervisor,
                {__MODULE__, opts}
@@ -83,9 +84,18 @@ defmodule Vaos.Knowledge.Store do
 
   @doc "Query triples by pattern keyword list (subject:, predicate:, object:)."
   @spec query(name(), keyword()) :: {:ok, [triple()]}
-  def query(name, pattern) do
+  def query(name, pattern), do: query(name, pattern, [])
+
+  @doc """
+  Query triples by pattern with optional read-time bounds.
+
+  Supported options:
+    * `:limit` - max number of triples to return
+  """
+  @spec query(name(), keyword(), keyword()) :: {:ok, [triple()]}
+  def query(name, pattern, opts) do
     case get_ets_refs(name) do
-      {:ok, ets_state} -> ETS.query(ets_state, pattern)
+      {:ok, ets_state} -> ETS.query(ets_state, pattern, opts)
       error -> error
     end
   end
@@ -144,13 +154,17 @@ defmodule Vaos.Knowledge.Store do
   @spec get_ets_refs(name()) :: {:ok, ETS.state()} | {:error, :not_running}
   def get_ets_refs(name) do
     case GenServer.whereis(via(name)) do
-      nil -> {:error, :not_running}
+      nil ->
+        {:error, :not_running}
+
       pid ->
         # Fast path: get ETS refs from process dictionary (set during init)
         case :erlang.process_info(pid, :dictionary) do
           {:dictionary, dict} ->
             case List.keyfind(dict, :ets_refs, 0) do
-              {:ets_refs, refs} -> {:ok, refs}
+              {:ets_refs, refs} ->
+                {:ok, refs}
+
               nil ->
                 # Fallback: ask GenServer (only happens if init hasn't set it yet)
                 GenServer.call(via(name), :get_ets_refs, 5_000)

@@ -81,6 +81,17 @@ defmodule Vaos.Knowledge do
     Store.query(name, pattern)
   end
 
+  @doc """
+  Query triples by pattern with optional bounds.
+
+  Supported options:
+    * `:limit` - max number of triples to return
+  """
+  @spec query(name(), pattern(), keyword()) :: {:ok, [triple()]}
+  def query(name, pattern, opts) do
+    Store.query(name, pattern, opts)
+  end
+
   @doc "Count triples in the store. Returns {:ok, non_neg_integer()}."
   @spec count(name()) :: {:ok, non_neg_integer()}
   def count(name) do

@@ -10,6 +10,7 @@ defmodule Vaos.Knowledge.Backend.Behaviour do
   @callback assert_many(state(), [triple()]) :: {:ok, state()}
   @callback retract(state(), triple()) :: {:ok, state()}
   @callback query(state(), pattern()) :: {:ok, [triple()]}
+  @callback query(state(), pattern(), keyword()) :: {:ok, [triple()]}
   @callback count(state()) :: {:ok, non_neg_integer()}
   @callback all_triples(state()) :: {:ok, [triple()]}
 end
